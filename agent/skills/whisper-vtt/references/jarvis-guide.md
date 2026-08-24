@@ -54,6 +54,49 @@ word "Enter" and auto-send will submit it for you.
 
 > "Jarvis, fix the bug on the homepage, Enter"
 > "Jarvis, explain why the build is slow"
+> "Jarvis, change auto_send to protected"  (pi edits config.toml; the change applies on the next dictation — no restart)
+
+## without sending — one-time override
+
+Say one of these phrases and the Enter is skipped for that one
+dictation, no matter the mode:
+
+> "Jarvis, show me the tasks without sending"
+> "Jarvis, paste this without sending, fix the header spacing"
+> "Jarvis, don't send, review the pricing page"
+
+The override phrase is stripped from what gets pasted.
+
+## sessions — one Jarvis, many items
+
+Reviewing a site or reading a doc? Open a session and narrate items
+one after another — no wake word between them:
+
+> "Jarvis, start a new session for AlignMe website"
+>   (chime — whisper is listening)
+> "reorder the hero section"
+> "fix the pricing table"
+> "the footer link is broken"
+> "that's all"
+
+The whole list commits as a titled task list (`## AlignMe website`)
+into TASKS.md — whisper hands it to pi automatically. Also:
+
+- "scratch that" — drop the last item
+- each item gets a tick; the menu bar shows the count
+- 60s of silence auto-commits (nothing is lost)
+
+## sticky follow-ups — the default way to work
+
+After any dictation, whisper stays armed for follow-ups. Fast cadence
+needs no wake word; the lapse gate re-arms it after ~20s of silence:
+
+> "Jarvis, show me the tasks"
+> "now open the homepage file"   (no jarvis needed)
+> "and check the build"
+> "that's all"   (disarms; wake word required again)
+
+Disable with `sticky = false` in `[session]`.
 
 ## In pi, after dictating
 
