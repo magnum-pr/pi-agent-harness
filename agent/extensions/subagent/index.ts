@@ -1,0 +1,1 @@
+/Users/dhavalrana/.local/node22/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/subagent/index.ts
