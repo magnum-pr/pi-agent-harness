@@ -30,6 +30,9 @@ agent/lesson-stats.json
 agent/AGENTS.md
 weekly-report/
 
+# Local notes (mine, not shared with the upstream fork)
+agent/references/skill-triggers.md
+
 # Generated state / local secrets
 agent/models-store.json
 agent/web-push.json
