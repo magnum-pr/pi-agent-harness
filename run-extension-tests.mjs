@@ -158,7 +158,7 @@ for (const { file, min } of declared) {
   let output = "";
   let ok = true;
   try {
-    output = execFileSync(process.execPath, ["--test", abs(file)], {
+    output = execFileSync(process.execPath, ["--test", "--test-reporter=spec", abs(file)], {
       encoding: "utf8",
       stdio: "pipe",
       cwd: ROOT,
