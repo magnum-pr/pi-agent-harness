@@ -85,15 +85,18 @@ Descriptions are the routing signal: each states what the skill is for **and** w
 
 ## Token-cost control
 
-Three pieces keep the context small and the spend visible — the harness's answer to "why is my context so big?"
+The harness's answer to "why is my context so big?" is measurement first, and suppression only where a mechanism is measured to pay for itself.
 
 | Piece | What it does |
 |---|---|
-| **bash-quiet** | Collapses successful bash output. Verification commands (`build`/`test`/`lint`/`tsc`/`gradle`/`mvn`…) → a one-line `✓ passed · N lines · full: <path>`; any other successful output over 200 lines → a head/tail window. Failures always pass through untouched. |
-| **read-cache** | Returns a one-line reference when the model re-reads an unchanged file at the same `(path, offset, limit)`. Cleared on compaction, invalidated on edit/write. |
+| **reasoning-level** | Turns thinking **off** after 3 consecutive file inspections — a read sweep, where the reasoning between inspections is trivial — and back on for a tool error, non-inspection work, or a new prompt. Deterministic (no agent compliance needed) and turn-neutral. |
 | **`/tokens`** | On-demand breakdown of the current session: system prompt, then per-layer estimates (user text, skill blocks, read results, bash results, thinking, tool-call args, assistant text) plus the calibration delta vs the provider's real total. Labeled as estimates — providers only report totals. |
 
 Run `/tokens` any time to see which layer is eating your context window.
+
+Two output-suppression extensions — `bash-quiet` and `read-cache` — were **removed** after replaying recorded sessions through their own logic showed they cost more than they saved: bash-quiet's hidden output was refetched **109%** of the time (net −2,271 tokens), and its >200-line path never fired across 38.8 hours. Recorded as GL-028 in `agent/LESSONS.md`.
+
+`reasoning-level` is the opposite case: it attacks the layer that actually dominates (thinking, 29–56% of context) rather than the 16% bash layer, and it needs no agent behaviour to work. See `PLAN.md` for the arithmetic and `.agent/grill/dynamic-thinking-level.md` for the design record.
 
 ---
 
@@ -140,11 +143,11 @@ Seven modules in `~/.pi/agent/extensions/` hook Pi's event system:
 | Extension | Hooks | What it does |
 |---|---|---|
 | **telemetry** | `session_start`, `turn_end`, `agent_end`, `session_shutdown` | Append-only JSONL of token usage, cost, skill invocations, and lesson citations; also registers `/tokens` |
-| **bash-quiet** | `tool_result` | Collapses successful bash output to a summary + temp-file path |
-| **read-cache** | `tool_result`, `session_compact` | Returns a reference for unchanged, already-in-context re-reads |
 | **session-summary** | `session_start`, `turn_end`, `session_shutdown` | Maintains a rolling `PROGRESS.md` entry; finalizes stale entries on next start |
 | **extract-patterns** | `agent_end`, `session_shutdown` | Scans assistant messages for lesson candidates → `.agent/lessons-pending.md`; incremental and deduped |
-| **learning-state-manager** | `message_end` | Strips telemetry JSON from assistant messages |
+| **learning** | `session_start`, `message_end`, `agent_end`, `session_shutdown` | Strips telemetry JSON from assistant messages |
+| **passivity** | `agent_end` | Emits a `PASSIVITY` notification when the last prompt was a bare nod (`ok`, `continue`), so the client can ask for a real question |
+| **reasoning-level** | `session_start`, `before_agent_start`, `tool_result` | Turns thinking off for read sweeps (3+ consecutive inspections) and back on for errors, real work, or a new prompt |
 | **telepi-handoff** | command | Registers `/handoff` (packaged, not authored here) |
 
 ---
@@ -189,8 +192,8 @@ Everything is optional — the harness works on defaults.
 ├── settings.json               # Provider/model/thinking defaults
 ├── lesson-stats.json           # Citation stats (telemetry-maintained, personal)
 ├── skills/                     # Composable skills (one workflow per file)
-├── extensions/                 # telemetry, bash-quiet, read-cache, session-summary,
-│                               #   extract-patterns, learning-state-manager, telepi-handoff
+├── extensions/                 # telemetry, session-summary, extract-patterns,
+│                               #   learning, passivity, reasoning-level, telepi-handoff
 ├── references/                 # Lazy-loaded reference docs
 └── templates/                  # Scaffold templates
 

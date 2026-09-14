@@ -21,8 +21,14 @@
 > the "my own words" field is the Feynman artifact that earns a badge upgrade.
 > Badge ladder: ⬜ Unmeasured → 🟥 Weak → 🟨 Fair → 🟩 Good → 🟦 Mastered.
 
-<!-- CONCEPT CARD — duplicate per concept; keep the name lowercase-hyphen -->
-### ⬜ <concept-name>
+<!-- CONCEPT CARD — duplicate per concept. The heading is the concept's NAME, in Title Case:
+     "Wheel Anatomy And Tension Model", not "wheel-anatomy-and-tension-model" and not sentence case.
+     The app derives the slug id from it, and the slug is what the telemetry and MIS references key on,
+     so the heading is the only place the words live. Keep hyphens and underscores out — the app reads
+     either as a word separator, so a hyphen inside a compound word is lost. A word with internal
+     capitals is left alone, so assert, useState and E46 survive; a lowercase acronym is not
+     recoverable, so write KPI in capitals yourself. -->
+### ⬜ Wheel Anatomy And Tension Model
 
 - **Status:** ⬜ Unmeasured
 - **Definition (my own words):** <blank — fill during recitation, no jargon>
@@ -41,10 +47,15 @@
 
 > Log of uncorrected assumptions surfaced during Socratic grilling. Append rows, never delete.
 > A misconception is "resolved" only when I explain the correct model in my own words.
+>
+> **Severity** is rated by the tutor, never inferred from the prose: `root` (core mental model is
+> wrong) · `partial` (right idea, applied wrongly) · `edge` (isolated slip, not a model flaw).
+> Leave it blank when unrated — blank means unrated, and that must stay honest. A resolved row
+> displays as `resolved` regardless of its stored rating. Nothing here is a mastery value.
 
-| ID | Concept | Misconception (what I believed) | Corrected model (my own words) | Status | Date |
-|----|---------|---------------------------------|-------------------------------|--------|------|
-| MIS-001 | <concept> | <what I got wrong> | <blank until resolved> | open | <YYYY-MM-DD> |
+| ID | Concept | Misconception (what I believed) | Corrected model (my own words) | Status | Date | Severity |
+|----|---------|---------------------------------|-------------------------------|--------|------|----------|
+| MIS-001 | <concept> | <what I got wrong> | <blank until resolved> | open | <YYYY-MM-DD> | <root\|partial\|edge, or blank> |
 
 ## 4. SM-2 Spaced Telemetry
 

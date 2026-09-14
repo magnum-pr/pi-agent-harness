@@ -1,58 +1,109 @@
-# PLAN — Pass 5: Token accounting by layer
+# Plan — Thinking off for read sweeps
+
+> Active work plan. One feature/phase at a time. Replace contents when starting a new feature.
 
 ## Goal
-
-Add per-layer token attribution (system prompt, user text, skill blocks, read results, bash results, thinking, tool-call args) to the existing `telemetry` extension, exposed via a `/tokens` command.
+Stop paying for reasoning during mechanical read sweeps, where the thinking between consecutive
+inspections is trivial — the single largest measurable lever on context and cost in this harness.
 
 ## Approach
+A **deterministic state machine in free hooks**. No agent compliance required, no blocking, no extra
+turns.
 
-Extend `agent/extensions/telemetry/index.ts` — do **not** create a parallel extension. It already hooks `session_start` / `turn_end` / `agent_end` / `session_shutdown`, so the new handlers live alongside them and share its state/helpers.
+Three measured findings decide the shape:
 
-Three new read-only hooks + a command:
+1. **The level is read per turn** (`agent-session.js:288` — `prepareNextTurnWithContext` returns
+   `thinkingLevel: this.agent.state.thinkingLevel`), so a change made in a `tool_result` handler
+   applies to the very next model call.
+2. **Turns cost ~200× cached tokens.** Output is $1.20/M against cacheRead $0.006/M. Each tool turn
+   generates ~264 tokens of thinking; a token of thinking is worth ~200 tokens of carried context.
+   → *Never trade a turn for fewer tokens.* This is why blocking gates are rejected: they buy
+   compliance at output prices.
+3. **Reads are batched into single commands, not single turns.** 789 file-reading bash calls carried
+   1,669 file ops, and 93% of tool turns hold exactly one tool call. The model batches *files per
+   command*, which is the efficient shape — so no rule should push it toward one-file-per-call.
 
-1. **`context` handler** — buckets the exact request's messages by layer (char/4 estimates), stores the result in memory, returns nothing (does not modify messages → preserves provider prompt caching).
-2. **`before_agent_start` handler** — sizes the system prompt + its `contextFiles` + `skills`, stores in memory.
-3. **`message_end` handler** — records the provider's reported `usage` (`input`/`output`/`cacheRead`/`cacheWrite`/`totalTokens`) for calibration.
-4. **`pi.appendEntry("tokens", …)`** — persists the latest snapshot as a `custom` entry (excluded from LLM context).
-5. **`/tokens` command** — reports the breakdown: `getContextUsage()` total, system-prompt size, per-layer buckets, and the **calibration delta** (sum-of-estimates vs context total).
+Rejected on evidence, not taste:
+- **Enforcing the `read` tool over `bash cat`** — converting 789 calls into ~1,669 reads adds ~880
+  turns ≈ **+232K output-priced tokens**, against ~205K cached tokens saved. Net ≈ −$0.3 plus an
+  earlier compaction.
+- **`tool_call` blocking** — each block costs a wasted turn (~264 output tok + a context re-read).
+- **`context` injection of reminders** — an injected message changes the context, so it invalidates
+  the cached prefix. Not free, contrary to first assumption.
+- **Hash-dedupe of repeat reads** — real but small: 52 of 202 distinct paths (26%) re-read,
+  ~**17,490 tok** saved, and it costs shell parsing plus a cache reset per substitution. Deferred.
 
-**Key design decisions:**
-- **No runtime imports from the package.** `parseSkillBlock` is re-implemented as a local regex (a global `<skill …>…</skill>` matcher, more robust than the single-block export) and the existing local `estimateTokens` (chars/4) is reused. Rationale: the telemetry extension is critical infrastructure, and the runtime-import path (`@earendil-works/pi-coding-agent`) was never conclusively proven in pi-web RPC during Pass 3 — a load error here would kill *all* telemetry.
-- **Read-only `context` handler.** It must never return modified messages (would break prompt caching).
-- **Honest precision.** Layer counts are chars/4 estimates; the `/tokens` output labels them "estimated" and shows the delta vs `getContextUsage()`.
+### The state machine
+
+```ts
+const INSPECT = /(^|[\s;&|])(cat|head|tail|sed -n|ls|rg|grep|find|wc|git (status|log|diff|show))\b/;
+const INSPECT_TOOLS = new Set(["read", "grep", "ls", "find"]);
+const THRESHOLD = 3;
+
+session_start      -> baseline = pi.getThinkingLevel()
+before_agent_start -> run = 0; apply(baseline)        // once per user prompt
+tool_result        -> isError                       -> run = 0; apply(baseline)
+                      inspecting (tool/command match) -> run++ ; run >= 3 && apply("off")
+                      otherwise                     -> run = 0; apply(baseline)
+apply(next)        -> no-op when next === current     // an unchanged level costs nothing
+```
+
+Rationale for the threshold of 3: a *single* interpretive read should keep thinking on — the turn
+that interprets a file is where the reasoning lives. Only a *run* of inspections has trivial
+reasoning between them. Any error resets the counter immediately, so a sweep that turns up a problem
+returns to baseline.
 
 ## Phases
 
-- **P1 — Bucketing (pure function, testable):** extract `bucketMessages(messages)` → `{ userText, skillBlocks, readResults, bashResults, otherToolResults, thinking, toolCallArgs, assistantText }` (token estimates). Unit-test it.
-- **P2 — `context` handler:** call `bucketMessages`, store `lastBuckets`, return nothing.
-- **P3 — `before_agent_start` + `message_end` handlers:** size system prompt; capture provider usage.
-- **P4 — persistence + command:** `appendEntry` snapshot on `message_end`; `/tokens` command renders the breakdown + delta.
-- **P5 — verify:** restart pi, run a real session, compare `/tokens` total vs `getContextUsage()` and vs a manual JSONL parse.
+1. **Pure decision function + tests** — `nextLevel(state, event) → { state, level }`, no pi runtime,
+   so it is unit-testable and goes into the declared test suite with a floor.
+2. **Hook wiring, armed *and* logged** — register the hooks; apply the level; also append what it
+   chose and why to the session. Logging is free (no turn, no request change), so Phase 2 yields the
+   saving and the calibration evidence in the same session.
+3. **Verification** — one real session: does the thinking layer shrink, and does the log show the
+   heuristic firing where a human would agree?
 
 ## Files that will change
 
 | File | Change | Phase |
 |---|---|---|
-| `agent/extensions/telemetry/index.ts` | add `bucketMessages`, 3 handlers, `appendEntry`, `/tokens` command | P1–P4 |
-| `agent/extensions/telemetry/buckets.ts` | new pure module for `bucketMessages` + its types (kept testable without pi) | P1 |
-| `.agent/scratch/buckets.test.mjs` | unit test for `bucketMessages` | P1 |
+| `agent/extensions/reasoning-level/level.ts` | new — pure decision function + constants | 1 |
+| `agent/extensions/reasoning-level/level.test.ts` | new — tests for the decision function | 1 |
+| `agent/extensions/reasoning-level/index.ts` | new — hook wiring, level application, logging | 2 |
+| `run-extension-tests.mjs` | declare the new test file; raise the floor | 1 |
+| `README.md` | document the extension and its threshold | 3 |
+
+Four files. No telemetry change — the decision log goes through `pi.appendEntry`, which already
+exists for this purpose.
 
 ## Acceptance criteria
 
-- [ ] `bucketMessages` unit test passes (user/skill/read/bash/thinking/toolCall bucketing).
-- [ ] Extension loads with no errors after restart.
-- [ ] `/tokens` prints a breakdown with: context total, system-prompt size, per-layer estimates, and a calibration delta.
-- [ ] The `/tokens` total is within ~20% of `getContextUsage()`.
-- [ ] `appendEntry` data does **not** appear in the LLM context (verify via a fresh session JSONL — `type:"custom"` entries are not sent).
-- [ ] A manual JSONL parse of the same session matches the `/tokens` layer split within a stated margin.
+- [ ] `node run-extension-tests.mjs` passes with the new test declared and the floor raised.
+- [ ] `pi -p "reply with exactly: PI OK"` → `PI OK` (the GL-027 startup check).
+- [ ] In a real session, a `thinking_level_change` entry appears after the 3rd consecutive inspection and the request that follows carries the new level.
+- [ ] That session's thinking layer is measurably smaller than an equivalent unarmed session.
+- [ ] No session is left at `off` across a new user prompt.
+- [ ] The decision log records every change with its trigger, so misfires are auditable after the fact.
+- [ ] The turn count does **not** increase versus an unarmed session — the feature must be turn-neutral.
 
 ## Not in scope
+- **Hash-dedupe of repeat reads** — measured at ~17.5K tok, requires shell parsing, and costs a cache reset per substitution. Revisit only if sweep-thinking-off proves insufficient.
+- **The agent-driven `set_thinking_level` tool** — deferred, not dropped. It costs ~150 tokens *per request* and its adherence is unproven (`record_learning` fired 7 times across 180 sessions; pi's own "use read instead of cat" guideline lost 20:1). Revisit only if the decision log shows the heuristic misfiring in ways a human would call wrong.
+- **`tool_call` blocking** — rejected on cost: it buys compliance with turns, at output prices.
+- Graduated levels — DeepSeek reasoning is binary; `low`/`medium`/`high` produce equivalent thinking.
+- Changes to other providers, models, or the `STANDARDS.md` capability map.
 
-- Exact per-layer counts (impossible — providers report totals only; this is calibrated estimates).
-- Pass 4 (outline tool).
-- Any change to `pi-agent-core`/`pi-ai` or the provider.
-- Fixing the (already-known) cache-read double-count — that was fixed separately in `450dfc1`.
+## Risks
+
+| Risk | Rank | Mitigation built into this plan |
+|---|---|---|
+| The sweep heuristic misfires (turns thinking off where reasoning was needed) | MEDIUM | `isError` resets immediately; threshold is 3, not 1; the decision log makes misfires auditable; a wrong `off` costs re-derivation, not correctness |
+| `off` transitions each cost a cache reset (~$0.0006) | LOW | `apply()` no-ops on an unchanged level, so only real transitions pay |
+| A session could be stranded at `off` | LOW | `before_agent_start` resets to baseline once per user prompt |
+| The heuristic's benefit is smaller than the estimate | MEDIUM | Criterion 4 measures the thinking layer on a real session; the estimate is ~124K tok from sweeps × 264 tok/turn |
+
+## References
+- [Grill record — dynamic thinking level](.agent/grill/dynamic-thinking-level.md) — the self-interrogation that established the free-hook design and the adherence finding.
 
 ## Open questions
-
-- None blocking. The only assumption is the `context` event message shape (`role` + `content` blocks, `toolResult` carrying `toolName`), which the re-audit already documented.
+- Is `THRESHOLD = 3` right? The decision log from Phase 2 is the instrument that answers it — no session data exists yet to justify another number.
