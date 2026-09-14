@@ -69,26 +69,29 @@ Plan:
 - bigger/later: route **phone dictation into pi** + replies back to
   phone (natural evolution of the existing Whisper VTT dictation loop).
 
-## 2026-09-13 — Mute / stop-replies control (PiWeb + Whisper VTT)
+## 2026-09-13 — Two voice modes: Awake (wake word) and Sleep (pseudo-sleep)
 
-**Idea:** a way to silence the agent while the user is listening to something
-else (a phone call, a conversation, ambient audio) — without the agent
-replying to transcribed speech it wasn't meant to hear.
+**Idea:** an explicit "sleep" state for the voice interface, so the agent can be
+silenced without the user having to fight the reply loop. (Pivoted from the
+earlier "mute / stop-replies" note — this is the concrete design, not a lesson.)
 
-**Problem observed:** ambient audio kept arriving as messages, and each one
-triggered a reply. Telling the agent "do not respond" did NOT stop the reply
-loop, because every incoming message still produces a turn. The agent's own
-acknowledgements were themselves interruptions.
+**Triggers → Sleep:** phrases such as _"Oracle, take a break"_, _"just listen"_,
+or _"standby"_. The agent acknowledges with a short token — e.g. **"Yes
+master."** — mirroring how the wake word already gets "yes?". Then it enters
+**Sleep mode**.
 
-**Proposed functionality:**
-- **PiWeb:** a mute / hard-pause control that stops the agent generating
-  replies to incoming messages until unmuted — a real state, not a prompt
-  instruction. Ideally also a "listen-only" mode that transcribes but never
-  responds.
-- **Whisper VTT:** a hotkey and/or voice command ("stop", "mute") that halts
-  forwarding transcription into the agent, plus ambient-noise suppression so
-  background conversation isn't captured as input.
-- **Both:** suppress auto-replies to messages flagged as ambient/inaudible, and
-  make "stop responding" a first-class command rather than a suggestion.
+**In Sleep mode:** the agent does not reply to, or act on, incoming audio /
+transcription. It stays "listening" only. Open question: does it keep
+transcribing to the VTT log (probably yes) but suppress all replies, or go fully
+dark?
 
-**Status:** feature request — not planned. No repo/design yet.
+**Wake:** saying _"Wake up"_ returns it to normal **Awake / wake-word mode**.
+
+**Why:** observed live — ambient audio arrived as messages and each one forced a
+reply; telling the agent "do not respond" could not stop it, because a reply is
+emitted per incoming message. A real mode toggle owned by the runtime is the only
+reliable fix (a prompt instruction is not a state).
+
+**Status:** idea / scaffold — belongs in the tech-stack improvement bucket.
+Depends on the voice pipeline (PiWeb + Whisper VTT) supporting a global
+input-gating state.
